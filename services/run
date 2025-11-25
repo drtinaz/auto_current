@@ -1,4 +1,4 @@
 #!/bin/sh
 echo "*** starting GenAutoCurrent ***"
 exec 2>&1
-exec /data/GenAutoCurrent/auto_current.py
+exec /data/apps/auto_current/auto_current.py
