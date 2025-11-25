@@ -42,7 +42,7 @@ GEN_AUTO_CURRENT_OFF = 2
 GEN_AUTO_CURRENT_ON = 3
 
 # CORRECTED: Configuration file path
-CONFIG_FILE_PATH = '/data/setupOptions/GenAutoCurrent/optionsSet'
+CONFIG_FILE_PATH = '/data/apps/auto_current/config.ini'
 
 class GeneratorDeratingMonitor:
     def __init__(self):

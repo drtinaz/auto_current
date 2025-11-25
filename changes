@@ -29,3 +29,5 @@ v1.10
 	fix logging error
 v1.11
 	move user settings from the service script to a config file to survive updates
+v1.12.0
+	change to stand alone install. (no longer uses setup helper)
