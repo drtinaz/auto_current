@@ -1,7 +1,7 @@
 #!/bin/bash
 
 driver_path="/data/apps"
-driver_name="auto_switch"
+driver_name="auto_current"
 
 # check if /data/apps path exists
 if [ ! -d "/data/apps" ]; then
@@ -141,11 +141,11 @@ fi
 
 
 # If updating: backup existing config file
-# if [ -f ${driver_path}/${driver_name_instance}/config.ini ]; then
-#     echo ""
-#     echo "Backing up existing config file..."
-#     mv ${driver_path}/${driver_name_instance}/config.ini ${driver_path}/${driver_name_instance}_config.ini
-# fi
+if [ -f ${driver_path}/${driver_name_instance}/config.ini ]; then
+    echo ""
+    echo "Backing up existing config file..."
+    mv ${driver_path}/${driver_name_instance}/config.ini ${driver_path}/${driver_name_instance}_config.ini
+fi
 
 
 # If updating: cleanup existing driver
@@ -192,11 +192,11 @@ fi
 
 
 # If updating: restore existing config file
-# if [ -f ${driver_path}/${driver_name_instance}_config.ini ]; then
-#     echo ""
-#     echo "Restoring existing config file..."
-#     mv ${driver_path}/${driver_name_instance}_config.ini ${driver_path}/${driver_name_instance}/config.ini
-# fi
+if [ -f ${driver_path}/${driver_name_instance}_config.ini ]; then
+    echo ""
+    echo "Restoring existing config file..."
+    mv ${driver_path}/${driver_name_instance}_config.ini ${driver_path}/${driver_name_instance}/config.ini
+fi
 
 
 # set permissions for files
@@ -211,27 +211,27 @@ chmod 755 ${driver_path}/${driver_name_instance}/service/log/run
 
 
 # copy default config file
-# if [ ! -f ${driver_path}/${driver_name_instance}/config.ini ]; then
+if [ ! -f ${driver_path}/${driver_name_instance}/config.ini ]; then
     echo ""
     echo ""
-#     echo "First installation detected. Copying default config file..."
+    echo "First installation detected. Copying default config file..."
     echo ""
-#    echo "** Do not forget to edit the config file with your settings! **"
-#    echo "You can edit the config file with the following command:"
-#    echo "nano ${driver_path}/${driver_name_instance}/config.ini"
-#    cp ${driver_path}/${driver_name_instance}/config.sample.ini ${driver_path}/${driver_name_instance}/config.ini
+    echo "** Do not forget to edit the config file with your settings! **"
+    echo "You can edit the config file with the following command:"
+    echo "nano ${driver_path}/${driver_name_instance}/config.ini"
+    cp ${driver_path}/${driver_name_instance}/config.sample.ini ${driver_path}/${driver_name_instance}/config.ini
     echo ""
-#    echo "** Execute the install.sh script after you have edited the config file! **"
+    echo "** Execute the install.sh script after you have edited the config file! **"
     echo "You can execute the install.sh script with the following command:"
     echo "bash ${driver_path}/${driver_name_instance}/install.sh"
     echo "or execute the restart.sh script if this is an update to an existing version:"
     echo "bash ${driver_path}/${driver_name_instance}/restart.sh"
     echo ""
-# else
-#    echo ""
-#    echo "Restart driver to apply new version..."
-#    /bin/bash ${driver_path}/${driver_name_instance}/restart.sh
-#fi
+ else
+    echo ""
+    echo "Restart driver to apply new version..."
+    /bin/bash ${driver_path}/${driver_name_instance}/restart.sh
+fi
 
 
 echo
