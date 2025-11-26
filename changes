@@ -33,3 +33,5 @@ v1.12.0
 	change to stand alone install. (no longer uses setup helper)
 v1.12.1
 	rename services directory
+v1.12.2
+	fix restart script
