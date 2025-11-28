@@ -51,31 +51,11 @@ done
 
 echo "> Selected: $version"
 echo ""
-
-
-# Which driver instance do you want to install?
-echo "Which driver instance do you want to install/update?"
-while true; do
-    read -p "Enter the driver instance number you want to install/update. If you don't know just press enter [1]: " driver_instance
-    if [[ -z "$driver_instance" || ( "$driver_instance" =~ ^[0-9]+$ && "$driver_instance" -ge 1 && "$driver_instance" -le 99 ) ]]; then
-        break
-    else
-        echo "Invalid input. Please enter a number between 1 and 255 or press enter."
-    fi
-done
-
-if [ -n "$driver_instance" ] && [ "$driver_instance" != "1" ]; then
-    driver_name_instance="${driver_name}-${driver_instance}"
-else
-    driver_name_instance=${driver_name}
-fi
-
-
 echo ""
-if [ -d ${driver_path}/${driver_name_instance} ]; then
-    echo "Updating driver '$driver_name' as '$driver_name_instance'..."
+if [ -d ${driver_path}/${driver_name} ]; then
+    echo "Updating driver '$driver_name'..."
 else
-    echo "Installing driver '$driver_name' as '$driver_name_instance'..."
+    echo "Installing driver '$driver_name'..."
 fi
 
 
@@ -141,18 +121,18 @@ fi
 
 
 # If updating: backup existing config file
-if [ -f ${driver_path}/${driver_name_instance}/config.ini ]; then
+if [ -f ${driver_path}/${driver_name}/config.ini ]; then
     echo ""
     echo "Backing up existing config file..."
-    mv ${driver_path}/${driver_name_instance}/config.ini ${driver_path}/${driver_name_instance}_config.ini
+    mv ${driver_path}/${driver_name}/config.ini ${driver_path}/${driver_name}_config.ini
 fi
 
 
 # If updating: cleanup existing driver
-if [ -d ${driver_path}/${driver_name_instance} ]; then
+if [ -d ${driver_path}/${driver_name} ]; then
     echo ""
     echo "Cleaning up existing driver..."
-    rm -rf ${driver_path:?}/${driver_name_instance}
+    rm -rf ${driver_path:?}/${driver_name}
 fi
 
 
@@ -160,7 +140,7 @@ fi
 echo ""
 echo "Copying new driver files..."
 
-cp -R /tmp/${driver_name}-master/ ${driver_path}/${driver_name_instance}/
+cp -R /tmp/${driver_name}-master/ ${driver_path}/${driver_name}/
 
 # remove temp files
 echo ""
@@ -169,69 +149,45 @@ rm -rf /tmp/${driver_name}.zip
 rm -rf /tmp/${driver_name}-master
 
 
-# check if driver_name is no equal to driver_name_instance
-if [ "$driver_name" != "$driver_name_instance" ]; then
-    echo ""
-    echo "Renaming internal driver files..."
-    # rename the driver_name.py file to driver_name_instance.py
-    mv ${driver_path}/${driver_name_instance}/${driver_name}.py ${driver_path}/${driver_name_instance}/${driver_name_instance}.py
-    # rename the driver_name in the run file to driver_name_instance
-    sed -i 's:'${driver_name}':'${driver_name_instance}':g' ${driver_path}/${driver_name_instance}/service/run
-    # rename the driver_name in the log run file to driver_name_instance
-    sed -i 's:'${driver_name}':'${driver_name_instance}':g' ${driver_path}/${driver_name_instance}/service/log/run
-
-    # add device_instance to the end of the line where device_name is found in the config sample file
-    #sed -i '/device_name/s/$/ '${driver_instance}'/' ${driver_path}/${driver_name_instance}/config.sample.ini
-
-    # change the device_instance from 100 to 100 + device_instance in the config sample file
-    #config_file_device_instance=$(grep 'device_instance = ' ${driver_path}/${driver_name_instance}/config.sample.ini | awk -F' = ' '{print $2}')
-    #new_device_instance=$((config_file_device_instance + driver_instance))
-    #sed -i 's/device_instance = 100/device_instance = '${new_device_instance}'/' ${driver_path}/${driver_name_instance}/config.sample.ini
-
-fi
-
-
 # If updating: restore existing config file
-if [ -f ${driver_path}/${driver_name_instance}_config.ini ]; then
+if [ -f ${driver_path}/${driver_name}_config.ini ]; then
     echo ""
     echo "Restoring existing config file..."
-    mv ${driver_path}/${driver_name_instance}_config.ini ${driver_path}/${driver_name_instance}/config.ini
+    mv ${driver_path}/${driver_name}_config.ini ${driver_path}/${driver_name}/config.ini
 fi
 
 
 # set permissions for files
 echo ""
 echo "Setting permissions for files..."
-chmod 755 ${driver_path}/${driver_name_instance}/${driver_name_instance}.py
-chmod 755 ${driver_path}/${driver_name_instance}/install.sh
-chmod 755 ${driver_path}/${driver_name_instance}/restart.sh
-chmod 755 ${driver_path}/${driver_name_instance}/uninstall.sh
-chmod 755 ${driver_path}/${driver_name_instance}/service/run
-chmod 755 ${driver_path}/${driver_name_instance}/service/log/run
+chmod 755 ${driver_path}/${driver_name}/${driver_name}.py
+chmod 755 ${driver_path}/${driver_name}/install.sh
+chmod 755 ${driver_path}/${driver_name}/restart.sh
+chmod 755 ${driver_path}/${driver_name}/uninstall.sh
+chmod 755 ${driver_path}/${driver_name}/service/run
+chmod 755 ${driver_path}/${driver_name}/service/log/run
 
 
 # copy default config file
-if [ ! -f ${driver_path}/${driver_name_instance}/config.ini ]; then
+if [ ! -f ${driver_path}/${driver_name}/config.ini ]; then
     echo ""
     echo ""
     echo "First installation detected. Copying default config file..."
     echo ""
     echo "** Do not forget to edit the config file with your settings! **"
     echo "You can edit the config file with the following command:"
-    echo "nano ${driver_path}/${driver_name_instance}/config.ini"
-    cp ${driver_path}/${driver_name_instance}/config.sample.ini ${driver_path}/${driver_name_instance}/config.ini
+    echo "nano ${driver_path}/${driver_name}/config.ini"
+    cp ${driver_path}/${driver_name}/config.sample.ini ${driver_path}/${driver_name}/config.ini
     echo ""
     echo "** Execute the install.sh script after you have edited the config file! **"
     echo "You can execute the install.sh script with the following command:"
-    echo "bash ${driver_path}/${driver_name_instance}/install.sh"
-    echo "or execute the restart.sh script if this is an update to an existing version:"
-    echo "bash ${driver_path}/${driver_name_instance}/restart.sh"
+    echo "bash ${driver_path}/${driver_name}/install.sh"
     echo ""
  else
     echo ""
     echo "Restart driver to apply new version..."
     sleep 5
-    /bin/bash ${driver_path}/${driver_name_instance}/restart.sh
+    /bin/bash ${driver_path}/${driver_name}/restart.sh
 fi
 
 

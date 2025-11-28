@@ -35,3 +35,5 @@ v1.12.1
 	rename services directory
 v1.12.2
 	fix restart script
+v1.12.3
+	minor changes
