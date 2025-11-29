@@ -12,7 +12,20 @@ sys.path.insert(1, "/opt/victronenergy/dbus-systemcalc-py/ext/velib_python")
 from ve_utils import wrap_dbus_value
 
 # Logging setup
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
+
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
+
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+
+logger.addHandler(console_handler)
+logger.setLevel(logging.INFO) # Default to DEBUG for better visibility
+
+#logging.basicConfig(level=logging.INFO)
 logging.info("Starting Generator Derating Monitor with file logging.")
 
 # D-Bus service names and paths
