@@ -12,8 +12,13 @@ In the settings menu of the venus device, set one of the DI to 'Bilge Pump' and 
 You can then use the 'invert' option in the device menu to turn the function on or off.
 
 Once you have assigned a digital input for this purpose, install the auto gen current service in ssh by entering the following:
+*************** INSTALL USING SSH ******************
 ```
-wget -O /tmp/download.sh https://raw.githubusercontent.com/drtinaz/auto_current/master/download.sh
-bash /tmp/download.sh
+wget -O /tmp/download.py https://raw.githubusercontent.com/drtinaz/scripts/main/download.py
+python /tmp/download.py
 ```
-For a first time installation you will need to edit the config file for your generator specific settings.
+
+to uninstall:
+```
+bash /data/apps/auto_current/uninstall.sh
+```
