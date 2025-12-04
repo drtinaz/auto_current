@@ -43,3 +43,5 @@ v1.13
 	add time descriptor to logs
 v1.13.0.1beta
 	simplify logging for dbus errors to prevent log spamming
+v1.14
+	stable release
