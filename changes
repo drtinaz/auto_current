@@ -41,3 +41,5 @@ v1.12.4
 	update restart script
 v1.13
 	add time descriptor to logs
+v1.13.0.1beta
+	simplify logging for dbus errors to prevent log spamming

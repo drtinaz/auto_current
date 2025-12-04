@@ -84,8 +84,22 @@ class GeneratorDeratingMonitor:
         self.generator_temp_fahrenheit = self.DEFAULT_GENERATOR_TEMP_F
         self.service_discovery_retries = 1
         self.service_discovery_delay = 5
+        
+        # Flags for Altitude conversion/array errors (existing logic)
         self.altitude_warning_logged = False
         self.altitude_value_logged_after_warning = False
+        
+        # NEW: Flags for Generator Temperature Service D-Bus errors
+        self.generator_temp_warning_logged = False
+        self.generator_temp_value_logged_after_warning = False
+        
+        # NEW: Flags for Outdoor Temperature Service D-Bus errors
+        self.outdoor_temp_warning_logged = False
+        self.outdoor_temp_value_logged_after_warning = False
+
+        # NEW: Flags for GPS/Altitude Service D-Bus errors
+        self.altitude_dbus_error_logged = False 
+        self.altitude_dbus_value_logged_after_error = False
 
         GLib.timeout_add_seconds(5, self._delayed_initialization)
         
@@ -162,14 +176,15 @@ class GeneratorDeratingMonitor:
         self._update_altitude(log_update=False, log_initial=True)
         self._update_generator_temperature(log_update=False, log_initial=True)
         self._update_gen_auto_current_state(initial_read=True)
+        
         # Initial read of the generator current limit setting
-        current_limit = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
+        current_limit, _ = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH) # Unpack the tuple
         if current_limit is not None:
             self.previous_generator_current_limit_setting = round(float(current_limit), 1)
             logging.info(f"Initial Generator Current Limit setting: {self.previous_generator_current_limit_setting:.1f} Amps")
 
         # Initial read of the AC active input current limit
-        ac_limit = self._get_dbus_value(self.vebus_service, AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH)
+        ac_limit, _ = self._get_dbus_value(self.vebus_service, AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH) # Unpack the tuple
         if ac_limit is not None:
             self.previous_ac_current_limit = round(float(ac_limit), 1)
             logging.info(f"Initial VE.Bus AC Active Input Current Limit: {self.previous_ac_current_limit:.1f} Amps")
@@ -182,18 +197,25 @@ class GeneratorDeratingMonitor:
         self.vebus_service = self._find_service(VEBUS_SERVICE_BASE)
 
     def _get_dbus_value(self, service_name, path):
-        if not service_name: # Added check
-            return None
+        """Returns (value, is_service_unknown_error)"""
+        if not service_name:
+            return None, False
         try:
             obj = self.bus.get_object(service_name, path)
             interface = dbus.Interface(obj, BUS_ITEM_INTERFACE)
-            return interface.GetValue()
-        except dbus.exceptions.DBusException as e: # More specific exception
-            logging.error(f"D-Bus error getting value from {service_name}{path}: {e}")
-            return None
-        except Exception as e: # Catch other unexpected errors
+            return interface.GetValue(), False
+        except dbus.exceptions.DBusException as e:
+            error_message = str(e)
+            is_service_unknown = "DBus.Error.ServiceUnknown" in error_message
+            if not is_service_unknown:
+                # Log other D-Bus errors normally (not ServiceUnknown)
+                logging.error(f"D-Bus error getting value from {service_name}{path}: {e}")
+            # Return None and the error flag
+            return None, is_service_unknown
+        except Exception as e:
+            # Catch other unexpected errors
             logging.error(f"Unexpected error getting value from {service_name}{path}: {e}")
-            return None
+            return None, False
 
     def _set_dbus_value(self, service_name, path, value):
         if not service_name: # Added check
@@ -294,26 +316,43 @@ class GeneratorDeratingMonitor:
 
     def _update_outdoor_temperature(self, log_update=True, log_initial=False):
         if self.outdoor_temp_service_name:
-            temp_celsius = self._get_dbus_value(self.outdoor_temp_service_name, TEMPERATURE_PATH)
+            temp_celsius, is_service_unknown = self._get_dbus_value(self.outdoor_temp_service_name, TEMPERATURE_PATH)
+            
             if temp_celsius is not None:
                 self.outdoor_temp_fahrenheit = (temp_celsius * 9/5) + 32
+                
                 if log_initial and self.initial_outdoor_temp is None:
                     self.initial_outdoor_temp = self.outdoor_temp_fahrenheit
                     logging.info(f"Initial Outdoor Temperature: {self.initial_outdoor_temp:.2f} F")
                 elif log_update:
-                    logging.debug(f"Updated outdoor temperature: {self.outdoor_temp_fahrenheit:.2f} F")
+                    if self.outdoor_temp_warning_logged or not self.outdoor_temp_value_logged_after_warning:
+                        logging.info(f"Outdoor Temperature: {self.outdoor_temp_fahrenheit:.2f} F. Valid value received.")
+                        self.outdoor_temp_warning_logged = False # Reset warning flag
+                        self.outdoor_temp_value_logged_after_warning = True # Set flag to prevent continuous info logs
+                    else:
+                        logging.debug(f"Updated outdoor temperature: {self.outdoor_temp_fahrenheit:.2f} F")
+            
+            elif is_service_unknown:
+                if not self.outdoor_temp_warning_logged:
+                    logging.warning(f"Outdoor Temperature Service '{self.outdoor_temp_service_name}' not available. Using previous or default value.")
+                    self.outdoor_temp_warning_logged = True
+                self.outdoor_temp_value_logged_after_warning = False # Reset flag for next valid value
+            
             else:
                 logging.debug("Could not retrieve outdoor temperature from D-Bus. Service might be gone or path invalid.")
+                self.outdoor_temp_value_logged_after_warning = False
         else:
             logging.debug("Outdoor temperature service not found. Using default value.")
+            self.outdoor_temp_value_logged_after_warning = False
 
     def _update_altitude(self, log_update=True, log_initial=False):
         if self.gps_service_name:
-            altitude_raw = self._get_dbus_value(self.gps_service_name, ALTITUDE_PATH)
+            altitude_raw, is_service_unknown = self._get_dbus_value(self.gps_service_name, ALTITUDE_PATH)
             altitude_meters = None # Initialize to None
 
             if altitude_raw is not None:
                 try:
+                    # Handle dbus.Array case (sometimes returned by GPS)
                     if isinstance(altitude_raw, dbus.Array):
                         if altitude_raw:
                             altitude_meters = float(altitude_raw[0])
@@ -321,56 +360,88 @@ class GeneratorDeratingMonitor:
                             if not self.altitude_warning_logged:
                                 logging.warning("Received empty dbus.Array for altitude. Using previous or default altitude.")
                                 self.altitude_warning_logged = True
-                            self.altitude_value_logged_after_warning = False # Reset flag for next valid value
+                            self.altitude_value_logged_after_warning = False
                     else:
                         altitude_meters = float(altitude_raw)
 
                     if altitude_meters is not None:
                         self.altitude_feet = altitude_meters * 3.28084
+                        
+                        # Log altitude update status
                         if log_initial and self.initial_altitude is None:
                             self.initial_altitude = self.altitude_feet
                             logging.info(f"Initial Altitude: {self.initial_altitude:.2f} feet")
                         elif log_update:
-                            if self.altitude_warning_logged or not self.altitude_value_logged_after_warning:
-                                logging.info(f"Updated altitude: {self.altitude_feet:.2f} feet")
-                                self.altitude_warning_logged = False # Reset warning flag
-                                self.altitude_value_logged_after_warning = True # Set flag to prevent continuous info logs
+                            if self.altitude_dbus_error_logged or not self.altitude_dbus_value_logged_after_error:
+                                logging.info(f"Updated altitude: {self.altitude_feet:.2f} feet. Valid value received.")
+                                self.altitude_dbus_error_logged = False # Reset D-Bus warning flag
+                                self.altitude_dbus_value_logged_after_error = True # Set flag to prevent continuous info logs
                             else:
                                 logging.debug(f"Updated altitude: {self.altitude_feet:.2f} feet")
+                                
+                        # Reset conversion/array warning flags on successful read
+                        self.altitude_warning_logged = False
+                        self.altitude_value_logged_after_warning = True
+
                 except (ValueError, TypeError) as e:
                     if not self.altitude_warning_logged:
                         logging.warning(f"Error converting altitude_raw '{altitude_raw}' to float: {e}. Using previous or default altitude.")
                         self.altitude_warning_logged = True
-                    self.altitude_value_logged_after_warning = False # Reset flag for next valid value
+                    self.altitude_value_logged_after_warning = False
+                    self.altitude_dbus_value_logged_after_error = False # Failed due to value, not D-Bus service
+
+            elif is_service_unknown:
+                if not self.altitude_dbus_error_logged:
+                    logging.warning(f"GPS Service '{self.gps_service_name}' not available. Using previous or default altitude.")
+                    self.altitude_dbus_error_logged = True
+                self.altitude_dbus_value_logged_after_error = False
+                
             else:
-                if not self.altitude_warning_logged:
-                    logging.warning("Could not retrieve altitude from D-Bus. Service might be gone or path invalid. Using previous or default altitude.")
-                    self.altitude_warning_logged = True
-                self.altitude_value_logged_after_warning = False
+                if not self.altitude_dbus_error_logged:
+                    logging.warning("Could not retrieve altitude from D-Bus (Non-ServiceUnknown error). Using previous or default altitude.")
+                    self.altitude_dbus_error_logged = True
+                self.altitude_dbus_value_logged_after_error = False
+                self.altitude_warning_logged = False # Clear this since it's a D-Bus path/read issue
         else:
             logging.debug("GPS service not found for altitude. Using default value.")
-            self.altitude_value_logged_after_warning = False
+            self.altitude_dbus_value_logged_after_error = False
+            self.altitude_warning_logged = False
 
     def _update_generator_temperature(self, log_update=True, log_initial=False):
         if self.generator_temp_service_name:
-            temp_celsius = self._get_dbus_value(self.generator_temp_service_name, TEMPERATURE_PATH)
+            temp_celsius, is_service_unknown = self._get_dbus_value(self.generator_temp_service_name, TEMPERATURE_PATH)
+            
             if temp_celsius is not None:
                 self.generator_temp_fahrenheit = (temp_celsius * 9/5) + 32
                 if log_initial and self.initial_generator_temp is None:
                     self.initial_generator_temp = self.generator_temp_fahrenheit
                     logging.info(f"Initial Generator Temperature: {self.initial_generator_temp:.2f} F")
-                elif log_update and self.generator_temp_fahrenheit > 212.0:
-                    logging.debug(f"Generator temperature above threshold: {self.generator_temp_fahrenheit:.2f} F")
                 elif log_update:
-                    logging.debug(f"Generator temperature: {self.generator_temp_fahrenheit:.2f} F (below threshold)")
+                    if self.generator_temp_warning_logged or not self.generator_temp_value_logged_after_warning:
+                        logging.info(f"Generator Temperature: {self.generator_temp_fahrenheit:.2f} F. Valid value received.")
+                        self.generator_temp_warning_logged = False # Reset warning flag
+                        self.generator_temp_value_logged_after_warning = True # Set flag to prevent continuous info logs
+                    elif self.generator_temp_fahrenheit > 212.0:
+                        logging.debug(f"Generator temperature above threshold: {self.generator_temp_fahrenheit:.2f} F")
+                    else:
+                        logging.debug(f"Generator temperature: {self.generator_temp_fahrenheit:.2f} F (below threshold)")
+            
+            elif is_service_unknown:
+                if not self.generator_temp_warning_logged:
+                    logging.warning(f"Generator Temperature Service '{self.generator_temp_service_name}' not available. Using previous or default value.")
+                    self.generator_temp_warning_logged = True
+                self.generator_temp_value_logged_after_warning = False # Reset flag for next valid value
+            
             else:
                 logging.debug("Could not retrieve generator temperature from D-Bus. Service might be gone or path invalid.")
+                self.generator_temp_value_logged_after_warning = False
         else:
             logging.debug("Generator temperature service not found. Using default value.")
+            self.generator_temp_value_logged_after_warning = False
 
     def _update_gen_auto_current_state(self, initial_read=False):
         if self.gen_auto_current_service:
-            state = self._get_dbus_value(self.gen_auto_current_service, STATE_PATH)
+            state, _ = self._get_dbus_value(self.gen_auto_current_service, STATE_PATH)
             if state is not None:
                 state = int(state)
                 if initial_read:
@@ -392,7 +463,7 @@ class GeneratorDeratingMonitor:
 
     def _is_generator_running(self):
         if self.transfer_switch_service:
-            state = self._get_dbus_value(self.transfer_switch_service, STATE_PATH)
+            state, _ = self._get_dbus_value(self.transfer_switch_service, STATE_PATH)
             return state in GENERATOR_ON_VALUE
         return False
 
@@ -426,13 +497,13 @@ class GeneratorDeratingMonitor:
             derated_output_amps = self.BASE_GENERATOR_OUTPUT_AMPS * derating_factor
             rounded_output = round(derated_output_amps, 1)
 
-            current_generator_limit_setting = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
+            current_generator_limit_setting, _ = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
 
             if not self.initial_derated_output_logged:
                 self._set_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH, rounded_output)
                 logging.info(f"Initial Transfer Switch Generator Current Limit set to: {rounded_output:.1f} Amps (due to auto derating)")
                 self.initial_derated_output_logged = True
-            elif current_generator_limit_setting is None or abs(current_generator_limit_setting - rounded_output) > 0.01:
+            elif current_generator_limit_setting is None or abs(float(current_generator_limit_setting) - rounded_output) > 0.01:
                 self._set_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH, rounded_output)
                 logging.debug(f"Transfer Switch Generator Current Limit updated to: {rounded_output:.1f} Amps (due to auto derating)")
             else:
@@ -443,7 +514,7 @@ class GeneratorDeratingMonitor:
 
     def _sync_generator_limit_to_ac_input(self):
         if self.vebus_service and self._is_generator_running():
-            current_generator_limit_setting = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
+            current_generator_limit_setting, _ = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
             if current_generator_limit_setting is not None:
                 rounded_gen_limit = round(float(current_generator_limit_setting), 1)
 
@@ -462,13 +533,13 @@ class GeneratorDeratingMonitor:
 
     def _sync_generator_limit_from_ac_input(self):
         if self.vebus_service and self._is_generator_running():
-            current_ac_limit = self._get_dbus_value(self.vebus_service, AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH)
+            current_ac_limit, _ = self._get_dbus_value(self.vebus_service, AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH)
             if current_ac_limit is not None:
                 rounded_ac_limit = round(float(current_ac_limit), 1)
 
                 if self.previous_ac_current_limit is None or abs(rounded_ac_limit - self.previous_ac_current_limit) > 0.01:
-                    current_gen_limit = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
-                    if current_gen_limit is None or abs(current_gen_limit - rounded_ac_limit) > 0.01:
+                    current_gen_limit, _ = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
+                    if current_gen_limit is None or abs(float(current_gen_limit) - rounded_ac_limit) > 0.01:
                         self._set_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH, rounded_ac_limit)
                         logging.info(f"Generator running and Active AC Current Limit has been manually changed: Synced Generator Current Limit to VE.Bus AC Active Input Current Limit ({rounded_ac_limit:.1f} Amps).")
                         self.previous_generator_current_limit_setting = rounded_ac_limit
@@ -525,3 +596,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
