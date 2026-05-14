@@ -45,3 +45,5 @@ v1.13.0.1beta
 	simplify logging for dbus errors to prevent log spamming
 v1.14
 	stable release
+v1.15
+	Refactor auto current handling by removing unused variables and updating logging. Enhance derating functionality to write to specified D-Bus paths based on generator state.
