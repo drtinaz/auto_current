@@ -77,8 +77,6 @@ class GeneratorDeratingMonitor:
         self.initial_altitude = None
         self.initial_outdoor_temp = None
         self.initial_generator_temp = None
-        self.previous_ac_current_limit = None
-        self.previous_generator_current_limit_setting = None
         self.outdoor_temp_fahrenheit = self.DEFAULT_OUTDOOR_TEMP_F
         self.altitude_feet = self.DEFAULT_ALTITUDE_FEET
         self.generator_temp_fahrenheit = self.DEFAULT_GENERATOR_TEMP_F
@@ -178,16 +176,14 @@ class GeneratorDeratingMonitor:
         self._update_gen_auto_current_state(initial_read=True)
         
         # Initial read of the generator current limit setting
-        current_limit, _ = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH) # Unpack the tuple
+        current_limit, _ = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
         if current_limit is not None:
-            self.previous_generator_current_limit_setting = round(float(current_limit), 1)
-            logging.info(f"Initial Generator Current Limit setting: {self.previous_generator_current_limit_setting:.1f} Amps")
+            logging.info(f"Initial Generator Current Limit setting: {round(float(current_limit), 1)} Amps")
 
         # Initial read of the AC active input current limit
-        ac_limit, _ = self._get_dbus_value(self.vebus_service, AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH) # Unpack the tuple
+        ac_limit, _ = self._get_dbus_value(self.vebus_service, AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH)
         if ac_limit is not None:
-            self.previous_ac_current_limit = round(float(ac_limit), 1)
-            logging.info(f"Initial VE.Bus AC Active Input Current Limit: {self.previous_ac_current_limit:.1f} Amps")
+            logging.info(f"Initial VE.Bus AC Active Input Current Limit: {round(float(ac_limit), 1)} Amps")
 
     def _find_service(self, service_base):
         services = [name for name in self.bus.list_names() if name.startswith(service_base)]
@@ -218,16 +214,17 @@ class GeneratorDeratingMonitor:
             return None, False
 
     def _set_dbus_value(self, service_name, path, value):
-        if not service_name: # Added check
+        if not service_name:
             logging.warning(f"Attempted to set D-Bus value for {path} but service_name is None.")
             return
         try:
             obj = self.bus.get_object(service_name, path)
             interface = dbus.Interface(obj, BUS_ITEM_INTERFACE)
             interface.SetValue(wrap_dbus_value(value))
-        except dbus.exceptions.DBusException as e: # More specific exception
+            logging.debug(f"Successfully set {service_name}{path} to {value}")
+        except dbus.exceptions.DBusException as e:
             logging.error(f"D-Bus error setting value for {service_name}{path} to {value}: {e}")
-        except Exception as e: # Catch other unexpected errors
+        except Exception as e:
             logging.error(f"Unexpected error setting value for {service_name}{path} to {value}: {e}")
 
     def _find_outdoor_temperature_service(self):
@@ -277,10 +274,10 @@ class GeneratorDeratingMonitor:
             except Exception as e:
                 logging.debug(f"Unexpected error checking ProductName for {service_name}: {e}")
 
-    def _find_gps_service_internal(self): # Renamed to internal
+    def _find_gps_service_internal(self):
         self.gps_service_name = self._find_service(GPS_SERVICE_BASE)
 
-    def _find_transfer_switch_input_internal(self): # Renamed to internal
+    def _find_transfer_switch_input_internal(self):
         self.transfer_switch_service = None # Reset before search
         service_names = [name for name in self.bus.list_names() if name.startswith(DIGITAL_INPUT_SERVICE_BASE)]
         for service_name in service_names:
@@ -297,7 +294,7 @@ class GeneratorDeratingMonitor:
             except Exception as e:
                 logging.debug(f"Unexpected error checking product name for {service_name}: {e}")
 
-    def _find_gen_auto_current_input_internal(self): # Renamed to internal
+    def _find_gen_auto_current_input_internal(self):
         self.gen_auto_current_service = None # Reset before search
         service_names = [name for name in self.bus.list_names() if name.startswith(DIGITAL_INPUT_SERVICE_BASE)]
         for service_name in service_names:
@@ -460,7 +457,6 @@ class GeneratorDeratingMonitor:
         else:
             logging.debug("'Gen Auto Current' input service not found. Cannot read state.")
 
-
     def _is_generator_running(self):
         if self.transfer_switch_service:
             state, _ = self._get_dbus_value(self.transfer_switch_service, STATE_PATH)
@@ -489,7 +485,14 @@ class GeneratorDeratingMonitor:
 
         return temperature_multiplier * altitude_multiplier * generator_temp_multiplier * self.OUTPUT_BUFFER
 
-    def _perform_derating(self):
+    def _perform_derating(self, target_path):
+        """
+        Calculate derated value and write to specified D-Bus path.
+        
+        Args:
+            target_path: The D-Bus path to write the derated value to
+                        (either GENERATOR_CURRENT_LIMIT_PATH or AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH)
+        """
         if self.outdoor_temp_fahrenheit is not None and self.altitude_feet is not None and self.generator_temp_fahrenheit is not None:
             derating_factor = self.calculate_derating_factor(
                 self.outdoor_temp_fahrenheit, self.altitude_feet, self.generator_temp_fahrenheit
@@ -497,65 +500,38 @@ class GeneratorDeratingMonitor:
             derated_output_amps = self.BASE_GENERATOR_OUTPUT_AMPS * derating_factor
             rounded_output = round(derated_output_amps, 1)
 
-            current_generator_limit_setting, _ = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
-
-            if not self.initial_derated_output_logged:
-                self._set_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH, rounded_output)
-                logging.info(f"Initial Transfer Switch Generator Current Limit set to: {rounded_output:.1f} Amps (due to auto derating)")
-                self.initial_derated_output_logged = True
-            elif current_generator_limit_setting is None or abs(float(current_generator_limit_setting) - rounded_output) > 0.01:
-                self._set_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH, rounded_output)
-                logging.debug(f"Transfer Switch Generator Current Limit updated to: {rounded_output:.1f} Amps (due to auto derating)")
+            # Determine which service to write to based on target path
+            if target_path == GENERATOR_CURRENT_LIMIT_PATH:
+                service_name = self.settings_service_name
+                setting_description = "Transfer Switch Generator Current Limit"
+            elif target_path == AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH:
+                service_name = self.vebus_service
+                setting_description = "VE.Bus AC Active Input Current Limit"
             else:
-                logging.debug(f"Transfer Switch Generator Current Limit remains: {rounded_output:.1f} Amps")
+                logging.error(f"Unknown target path: {target_path}")
+                return
+
+            # Read current value
+            current_value, _ = self._get_dbus_value(service_name, target_path)
+            
+            # Write if value has changed significantly
+            if current_value is None or abs(float(current_value) - rounded_output) > 0.01:
+                self._set_dbus_value(service_name, target_path, rounded_output)
+                
+                # Different log messages based on whether it's the first write or an update
+                if target_path == GENERATOR_CURRENT_LIMIT_PATH and not self.initial_derated_output_logged:
+                    logging.info(f"Initial {setting_description} set to: {rounded_output:.1f} Amps (due to auto derating)")
+                    self.initial_derated_output_logged = True
+                else:
+                    logging.info(f"{setting_description} updated to: {rounded_output:.1f} Amps (due to auto derating)")
+            else:
+                logging.debug(f"{setting_description} remains: {rounded_output:.1f} Amps")
 
         else:
             logging.warning("Not all temperature or altitude data available for derating. Skipping calculation.")
 
-    def _sync_generator_limit_to_ac_input(self):
-        if self.vebus_service and self._is_generator_running():
-            current_generator_limit_setting, _ = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
-            if current_generator_limit_setting is not None:
-                rounded_gen_limit = round(float(current_generator_limit_setting), 1)
-
-                if self.previous_generator_current_limit_setting is None or abs(self.previous_generator_current_limit_setting - rounded_gen_limit) > 0.01:
-                    self._set_dbus_value(self.vebus_service, AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH, rounded_gen_limit)
-                    logging.debug(f"Generator running: Synced VE.Bus AC Active Input Current Limit to Generator Current Limit ({rounded_gen_limit:.1f} Amps).")
-                    self.previous_ac_current_limit = rounded_gen_limit
-                    self.previous_generator_current_limit_setting = rounded_gen_limit
-                else:
-                    logging.debug(f"Generator running: VE.Bus AC Active Input Current Limit already matches Generator Current Limit ({rounded_gen_limit:.1f} Amps).")
-            else:
-                logging.warning("Could not retrieve Generator Current Limit setting. Cannot sync to AC input.")
-        elif self.vebus_service:
-            logging.debug("Generator not running, AC Active Input Current Limit not synced from generator current limit setting.")
-
-
-    def _sync_generator_limit_from_ac_input(self):
-        if self.vebus_service and self._is_generator_running():
-            current_ac_limit, _ = self._get_dbus_value(self.vebus_service, AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH)
-            if current_ac_limit is not None:
-                rounded_ac_limit = round(float(current_ac_limit), 1)
-
-                if self.previous_ac_current_limit is None or abs(rounded_ac_limit - self.previous_ac_current_limit) > 0.01:
-                    current_gen_limit, _ = self._get_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH)
-                    if current_gen_limit is None or abs(float(current_gen_limit) - rounded_ac_limit) > 0.01:
-                        self._set_dbus_value(self.settings_service_name, GENERATOR_CURRENT_LIMIT_PATH, rounded_ac_limit)
-                        logging.info(f"Generator running and Active AC Current Limit has been manually changed: Synced Generator Current Limit to VE.Bus AC Active Input Current Limit ({rounded_ac_limit:.1f} Amps).")
-                        self.previous_generator_current_limit_setting = rounded_ac_limit
-
-                    self.previous_ac_current_limit = rounded_ac_limit
-                else:
-                    logging.debug(f"Generator running: VE.Bus AC Active Input Current Limit ({rounded_ac_limit:.1f} Amps) has not changed.")
-            else:
-                logging.warning("Could not retrieve VE.Bus AC Active Input Current Limit. Cannot sync to generator current limit.")
-        elif self.vebus_service:
-            if not self._is_generator_running():
-                logging.debug("Generator not running, AC Active Input Current Limit not synced to generator current limit.")
-            elif self.gen_auto_current_state == GEN_AUTO_CURRENT_ON:
-                logging.debug(f"'Gen Auto Current' is ON ({GEN_AUTO_CURRENT_ON}), AC Active Input Current Limit not synced to generator current limit.")
-
     def _periodic_monitoring(self):
+        # Always try to discover services if not found
         if not self.vebus_service:
             self._find_service_once(self._find_vebus_service, 'vebus_service', 'VE.Bus service')
         if not self.outdoor_temp_service_name:
@@ -569,22 +545,28 @@ class GeneratorDeratingMonitor:
         if not self.gen_auto_current_service:
             self._find_service_once(self._find_gen_auto_current_input_internal, 'gen_auto_current_service', "'Gen Auto Current' input service")
 
+        # Update sensor values
         self._update_outdoor_temperature()
         self._update_altitude()
         self._update_generator_temperature()
         self._update_gen_auto_current_state()
 
-        self._sync_generator_limit_to_ac_input()
+        # Check if Gen Auto Current is enabled
+        if self.gen_auto_current_state != GEN_AUTO_CURRENT_ON:
+            logging.debug(f"Gen Auto Current is not enabled (state: {self.gen_auto_current_state}). Taking no action.")
+            return True
 
-        if self._is_generator_running() and self.gen_auto_current_state == GEN_AUTO_CURRENT_OFF:
-             self._sync_generator_limit_from_ac_input()
+        # Gen Auto Current is enabled - determine target based on input source
+        generator_running = self._is_generator_running()
+        
+        if generator_running:
+            # Case: Generator is running - write to Active Current Limit
+            logging.debug("Gen Auto Current ON and Generator running - writing derated value to Active Current Limit")
+            self._perform_derating(AC_ACTIVE_INPUT_CURRENT_LIMIT_PATH)
         else:
-             logging.debug(f"Generator not running or 'Gen Auto Current' is ON ({self.gen_auto_current_state}). Skipping sync from AC input.")
-
-        if self.gen_auto_current_state == GEN_AUTO_CURRENT_ON:
-            self._perform_derating()
-        else:
-            logging.debug(f"Gen Auto Current state is not ON ({GEN_AUTO_CURRENT_ON}). Current state: {self.gen_auto_current_state}")
+            # Case: Generator not running (e.g., on shore power) - write to Generator Current Limit setting
+            logging.debug("Gen Auto Current ON and Generator NOT running - writing derated value to Generator Current Limit setting")
+            self._perform_derating(GENERATOR_CURRENT_LIMIT_PATH)
 
         return True
 
@@ -596,4 +578,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
