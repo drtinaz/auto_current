@@ -515,7 +515,7 @@ class GeneratorDeratingMonitor:
             current_value, _ = self._get_dbus_value(service_name, target_path)
             
             # Write if value has changed significantly
-            if current_value is None or abs(float(current_value) - rounded_output) > 0.02:
+            if current_value is None or abs(float(current_value) - rounded_output) > 0.2:
                 self._set_dbus_value(service_name, target_path, rounded_output)
                 
                 # Different log messages based on whether it's the first write or an update
